@@ -1,0 +1,59 @@
+Smart Home Capstone
+Team- Shruti, Edwin, Matthew
+
+System Block Diagram 
+
+            ┌───────────────────────────────────────────────────┐
+            │                  USB-C 5V Charger                                  │
+            │        (5 V OUT; GND common to entire system)                      │
+            └───────────────┬───────────────────────────────────┘
+                                 │ +5V
+                                 │
+                        ┌──────┴──────┐
+                          │  5V Rail    │
+                        └──────┬──────┘
+                                 │
+           ┌────────────────┴────────────────┐
+           │                                            │
+   ┌───────────────┐                 ┌──────▼────────┐
+   │  INA219 #1         │                 │  INA219 #2         │
+   │ (High-side         │                 │ (High-side         │
+   │  current sense)    │                 │  current sense)    │
+   │  VIN+  VIN–        │                 │  VIN+  VIN–        │
+   └───┬────┬──────┘                 └───┬────┬──────┘
+        │      │                               │      │
+        │      └─────────> to Actuator #1   │      └───> to Actuator #2 5V in
+        │                      5V in           │
+   from 5V rail                            from 5V rail
+
+        │                                       │
+   ┌───▼───────────┐                     ┌──────────────┐
+   │ Actuator #1        │                     │ Actuator #2       │
+   │ (Relay/SSR/        │                     │ (Relay/SSR/       │
+   │  USB 5V switch     │                     │  USB 5V switch    │
+   │  KG55WF-Y2?)       │                     │  KG55WF-Y2?)      │
+   │  CTRL via GPIO     │                     │  CTRL via GPIO    │
+   └───┬───────┬───┘                     └───┬───────┬──┘
+        │          └──────── GND (common)        │         └─── GND (common)
+        │                                           │
+   ┌───▼────────────┐                      ┌───▼───────────┐
+   │ Load #1              │                      │ Load #2            │
+   │ USB-C Fan            │                      │ 5 V Device         │
+   │ (5 V IN, GND)        │                      │ (e.g., sensor,     │
+   └────────────────┘                      │ light/charger)     │
+                                                 └───────────────┘
+
+
+                         I²C Bus (3.3 V logic)
+      ┌───────────────────────────────────────────────────────────────┐
+      │                  STM32 Nucleo (3.3 V)                                              │
+      │  ┌───────────────┐   ┌───────────────┐   ┌─────────────────┐     │
+      │  │  I²C SCL/SDA     ─┼───┤ INA219 #1          │   │  INA219 #2           │      │
+      │  └───────────────┘   └───────────────┘   └─────────────────┘      │
+      │  ┌───────────────┐   ┌───────────────┐                                  │
+      │  │ GPIO → ACT#1     ─┼───┤ Actuator #1        │                                  │
+      │  │ GPIO → ACT#2     ─┼───┤ Actuator #2        │                                  │
+      │  └───────────────┘   └───────────────┘                                  │
+      │  (Optional UART to ESP8266/ESP32 for Wi-Fi dashboard)                              │
+      └───────────────────────────────────────────────────────────────┘
+
