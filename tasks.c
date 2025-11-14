@@ -12,20 +12,32 @@ int A_Sample(tasksAData* data) {
             break;
         case SAMPLE:
             // Sample current from first INA219 sensor
-            readCurrent(data->channel);
+            readCurrent(&data);
             // Sample voltage from first INA219 sensor
-            readVoltage(data->channel);
+            readVoltage(&data);
             // Calculate power for first sensor
             data->total_power += (data->current * data->voltage);
             data->total_count++;
             state = SAMPLE;
             break;
     }
-}
-
-static int readCurrent(int channel) {
-    // Placeholder for reading current from INA219 sensor
-    
+    data->state = state;
     return 0;
 }
-static int readVoltage(int channel);
+
+static void readCurrent(tasksAData* data) {
+    // Placeholder for reading current from INA219 sensor
+    int channel = data->channel;
+    // Call function from INA219 to read current
+    int current = 0; // INA219_ReadCurrent(channel);
+    data->current = current;
+    return;
+}
+static void readVoltage(tasksAData* data) {
+    // Placeholder for reading voltage from INA219 sensor
+    int channel = data->channel;
+    // Call function from INA219 to read voltage
+    int voltage = 0; // INA219_ReadVoltage(channel);
+    data->voltage = voltage;
+    return;
+}
