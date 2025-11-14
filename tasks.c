@@ -1,44 +1,31 @@
 // Code to sample the data points at __ kHz
 #include <stdio.h>
+#include "tasks_a.h"
 
 // Need to check if we are storing the average current/voltage/power over time
-typedef struct {
-    int current;
-    int voltage;
-    int power;
-    int total_current;
-    int total_count;
-    int avg_current;
-} tasksA;
 
-enum A_States {
-    INIT,
-    CURRENT0,
-    CURRENT1,
-    VOLTAGE0,
-    VOLTAGE1
-};
-
-int TaskA(int state) {
+int A_Sample(tasksAData* data) {
+    int state = data->state;
     switch (state) {
         case INIT:
+            state = SAMPLE;
             break;
-        case CURRENT0:
+        case SAMPLE:
             // Sample current from first INA219 sensor
-            // Add current to total_current and increment total_count
-            break;
-        case CURRENT1:
-            // Sample current from second INA219 sensor
-            // Add current to total_current and increment total_count
-            break;
-        case VOLTAGE0:
+            readCurrent(data->channel);
             // Sample voltage from first INA219 sensor
-            break;
-        case VOLTAGE1:
-            // Sample voltage from second INA219 sensor
+            readVoltage(data->channel);
+            // Calculate power for first sensor
+            data->total_power += (data->current * data->voltage);
+            data->total_count++;
+            state = SAMPLE;
             break;
     }
 }
 
-static int readCurrent(int channel, int *output);
-static int readVoltage(int channel, int *output);
+static int readCurrent(int channel) {
+    // Placeholder for reading current from INA219 sensor
+    
+    return 0;
+}
+static int readVoltage(int channel);
