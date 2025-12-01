@@ -5,8 +5,8 @@ int g_num_tasks = 0;
 int g_current_task = -1;
 task *g_current_task = 0;
 
-static uint32_t *rtos_init_stack(TaskFn fn, void *arg, uint32_t *stack_top)
-task *rtos_schedule_next(void)
+static uint32_t *rtos_init_stack(TaskFn fn, void *arg, uint32_t *stack_top);
+task *rtos_schedule_next(void);
 
 int rtos_create_task(TaskFn fn, void *arg, uint32_t *stack_mem, uint32_t stack_words) {
     if (g_num_tasks >= MAX_TASKS) {
