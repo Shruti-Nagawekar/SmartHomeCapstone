@@ -2,20 +2,18 @@
 #define TASKS_A_H
 
 typedef struct {
-    int state;
     int channel;
     int current;
     int voltage;
+    int power;
     int total_power;
     int total_count;
     int avg_power;
 } tasksAData;
 
-enum A_States {
-    INIT,
-    SAMPLE
-};
+void task_a(void *arg);
 
-int A_Sample(tasksAData* data);
+int readCurrent(int channel);
+int readVoltage(int channel);
 
 #endif // TASKS_A_H
