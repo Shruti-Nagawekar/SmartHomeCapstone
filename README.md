@@ -1,53 +1,58 @@
-README – RTOS-Style Scheduler Demo (STM32F446RE)
+RTOS-Style Scheduler Demo (STM32F446RE)
 1. Overview
 
-This project implements a student-built RTOS-style cooperative scheduler on the STM32F446RE Nucleo-64 board.
-It demonstrates periodic task scheduling, inter-task communication, and UART reporting without using any external RTOS libraries.
+This project implements a custom RTOS-style cooperative scheduler on the STM32F446RE Nucleo-64 board.
+The goal is to demonstrate periodic tasks, inter-task messaging, and UART communication without using FreeRTOS or any external RTOS library.
 
-Three tasks run concurrently:
+Three periodic tasks are scheduled:
 
-TaskSense → Samples power readings (simulated INA219)
+TaskSense — Samples sensor readings (simulated INA219)
 
-TaskControl → Applies threshold logic + drives LED (fan indicator)
+TaskControl — Applies threshold logic and drives LED (fan indicator)
 
-TaskComms → Sends updates to UART using a mailbox message from Control
+TaskComms — Sends UART messages using mailbox data from Control
 
-This satisfies the project requirements for a multi-task system, software scheduler, and inter-task messaging.
+This meets the project requirements for:
+✔ Multi-task design
+✔ Software scheduler
+✔ Inter-task communication
+✔ UART output
 
-2. Board & Toolchain
+2. Hardware & Tools
 
 Board: NUCLEO-F446RE (Nucleo-64)
 
-Tool: STM32CubeIDE 1.19.0
+MCU: STM32F446RET6
 
-Clock: Internal HSI (16 MHz)
+IDE: STM32CubeIDE 1.19.0
+
+Clock Source: Internal HSI 16 MHz
 
 UART: USART2 → ST-LINK Virtual COM Port
 
-3. Build Instructions
+3. How to Build and Run
 
-Open the project inside STM32CubeIDE.
+Open the project in STM32CubeIDE.
 
-Place the provided main.c inside:
+Place the provided main.c in:
 
 Core/Src/main.c
 
 
-Press Build (hammer).
+Click Build (hammer icon).
 
-Press Debug or Run to flash to the board.
+Click Debug or Run to flash the board.
 
-4. Serial Output (UART)
+4. Serial Output
 
-Open a serial terminal such as PuTTY or the CubeIDE terminal:
+Use a serial terminal:
 
-Port: ST-LINK Virtual COM Port
-
-Baud: 115200
-
-Data: 8-N-1
-
-Flow control: None
+Setting	Value
+Baud Rate	115200
+Data	8 bits
+Parity	None
+Stop Bits	1
+Flow Control	None
 
 Typical output:
 
@@ -55,30 +60,40 @@ RTOS-style 3-task demo start
 t=501ms pA=250 pB=750 fan=1
 t=1001ms pA=495 pB=505 fan=0
 t=1501ms pA=740 pB=260 fan=1
-...
 
-5. Scheduler Design
+5. Scheduler Architecture
+Cooperative Scheduler
 
-The scheduler is:
+The scheduler is time-based and uses HAL_GetTick() for 1 ms timing.
 
-Cooperative
+Each task is stored in a table:
 
-Time-based using HAL_GetTick()
+typedef struct {
+    task_fn_t  fn;
+    uint32_t   period_ms;
+    uint32_t   next_release;
+} task_t;
 
-Works with a task table, where each task has:
 
-Function pointer
+Periods used:
 
-Period in milliseconds
+Task	Period	Frequency
+TaskSense	1 ms	1 kHz
+TaskControl	10 ms	100 Hz
+TaskComms	500 ms	2 Hz
+Scheduling Loop
 
-Next scheduled release time
+Every 1 ms:
 
-The scheduler runs every 1 ms, checking if any task is due.
-This achieves deterministic periodic task activation without preemption.
+scheduler();
+HAL_Delay(1);
 
-6. Inter-Task Communication
 
-A mailbox structure carries messages from TaskControl → TaskComms:
+The scheduler checks which tasks are due and runs them cooperatively.
+
+6. Inter-Task Communication (Mailbox)
+
+TaskControl produces messages, TaskComms consumes them.
 
 typedef struct {
     uint8_t  full;
@@ -88,36 +103,39 @@ typedef struct {
 } comms_mailbox_t;
 
 
-TaskControl publishes the newest sensor + fan state.
+full = 1 → new data available
 
-TaskComms consumes the message and prints it.
+Comms reads the message and prints it
 
-This satisfies the “inter-task communication” rubric requirement.
+Sets full = 0 after consuming
+
+This satisfies the rubric’s requirement for message passing between tasks.
 
 7. LED Behavior
 
-PA5 LED = Fan indicator
+LD2 (PA5) acts as a fan indicator.
 
-Turns ON when either power channel exceeds threshold (600).
+Turns ON when either sensor reading rises above 600.
 
 Turns OFF otherwise.
 
-8. File List (submitted)
+8. Folder / File Structure
+/Core
+  /Inc
+  /Src
+    main.c
+README.md   <-- this file
 
-Core/Src/main.c
-
-README.md (this file)
-
-9. How to Demonstrate
+9. How to Demonstrate to Instructor
 
 Reset the board.
 
-Show serial output updating every 500 ms.
+Show the UART output updating every 500 ms.
 
-Point out the three tasks and their periods.
+Point out the individual task periods (1 ms, 10 ms, 500 ms).
 
-Show mailbox operation (only prints when Control updates mailbox).
+Show mailbox operation (Comms prints only when Control posts new data).
 
-Show LED reacting to simulated load changes.
+Show LED toggling according to the threshold logic.
 
-This completes the functional requirements for a student-designed RTOS-style scheduler.
+This covers all grading criteria for the RTOS demo.
