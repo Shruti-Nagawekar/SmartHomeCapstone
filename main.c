@@ -201,9 +201,17 @@ int main(void)
 
     while (1)
     {
-        scheduler();     // run scheduler every tick
-        HAL_Delay(1);    // 1 ms granularity
+        __WFI();   // Wait For Interrupt (low-power idle)
     }
+}
+
+/* ===================== SysTick Handler (preemptive scheduler hook) ===================== */
+
+void SysTick_Handler(void)
+{
+    HAL_IncTick();   // HAL time base for HAL_GetTick, HAL_Delay, etc.
+
+    scheduler();     // run our RTOS scheduler preemptively every tick
 }
 
 /* ===================== CubeMX-style init functions ===================== */
