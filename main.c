@@ -25,8 +25,6 @@ typedef struct {
 #define NUM_TASKS 3
 
 static task_t tasks[NUM_TASKS];
-static volatile uint32_t sys_ticks  = 0;  // system time in ms
-static volatile int      sched_flag = 0;  // set by SysTick ISR
 
 /* Forward declarations of tasks */
 void TaskSense(void);
@@ -121,7 +119,7 @@ void TaskControl(void)
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, s);
 
     /* Publish a message to the mailbox for the Comms task */
-    comms_mailbox.ticks = sys_ticks;
+    comms_mailbox.ticks = HAL_GetTick();
     comms_mailbox.pA    = powerA;
     comms_mailbox.pB    = powerB;
     comms_mailbox.fan   = fan_on;
@@ -131,22 +129,23 @@ void TaskControl(void)
 /* TaskComms: reads mailbox and prints a message if new data is available */
 void TaskComms(void)
 {
-    uint32_t now = HAL_GetTick();   // instead of sys_ticks or 0
-    comms_send(now, powerA, powerB, fan_on);
+    if (comms_mailbox.full) {
+        /* Take snapshot */
+        uint32_t ticks = comms_mailbox.ticks;
+        uint16_t pA    = comms_mailbox.pA;
+        uint16_t pB    = comms_mailbox.pB;
+        uint8_t  fan   = comms_mailbox.fan;
+
+        comms_mailbox.full = 0;  // consume message
+
+        comms_send(ticks, pA, pB, fan);
+    }
 }
 
+/* ===================== Scheduler ===================== */
 
-/* ===================== Scheduler & SysTick ===================== */
-
-/* HAL calls this every 1 ms by default (interrupt context) */
-void HAL_SYSTICK_Callback(void)
-{
-    sys_ticks++;         // time base for scheduler and tasks
-    sched_flag = 1;      // request a scheduling decision
-}
-
-/* Cooperative, time-based scheduler
- * - Runs in main context (not inside the ISR)
+/* Cooperative, time-based scheduler using HAL_GetTick()
+ * - Runs in main context
  * - Chooses which task to run based on period & next_release time
  */
 static void scheduler(void)
@@ -160,7 +159,6 @@ static void scheduler(void)
         }
     }
 }
-
 
 /* Initialise the task table:
  * - Sense   @ 1 ms   (1 kHz)
@@ -206,7 +204,6 @@ int main(void)
         scheduler();     // run scheduler every tick
         HAL_Delay(1);    // 1 ms granularity
     }
-
 }
 
 /* ===================== CubeMX-style init functions ===================== */
@@ -307,4 +304,3 @@ void assert_failed(uint8_t *file, uint32_t line)
     /* You can printf here if you want */
 }
 #endif
-
