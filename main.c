@@ -11,36 +11,27 @@ static void MX_USART2_UART_Init(void);
 /* UART handle (used by HAL + printf) */
 UART_HandleTypeDef huart2;
 
-/* ===================== Globals & Typedefs ===================== */
+/* ===================== Task & Scheduler Types ===================== */
 
-/* (Scheduler types are still here but not used yet) */
+/* Simple periodic task type */
 typedef void (*task_fn_t)(void);
 
 typedef struct {
-    task_fn_t  fn;
-    uint32_t   period_ms;
-    uint32_t   next_release;
+    task_fn_t  fn;           // task function
+    uint32_t   period_ms;    // period in ms
+    uint32_t   next_release; // next release time in ms
 } task_t;
 
 #define NUM_TASKS 3
 
 static task_t tasks[NUM_TASKS];
-static volatile uint32_t sys_ticks  = 0;
-static volatile int      sched_flag = 0;
+static volatile uint32_t sys_ticks  = 0;  // system time in ms
+static volatile int      sched_flag = 0;  // set by SysTick ISR
 
 /* Forward declarations of tasks */
 void TaskSense(void);
 void TaskControl(void);
 void TaskComms(void);
-
-/* ===================== SysTick (just for timebase) ===================== */
-
-/* HAL calls this every 1 ms by default */
-void HAL_SYSTICK_Callback(void)
-{
-    sys_ticks++;
-    sched_flag = 1;   // not used yet, but harmless
-}
 
 /* ===================== Sensor Abstraction ===================== */
 
@@ -87,10 +78,24 @@ static void comms_esp_at(uint32_t ticks, uint16_t pA, uint16_t pB, uint8_t fan)
 
 static comms_send_fn_t comms_send = comms_uart;
 
+/* ===================== Inter-task Communication (Mailbox) ===================== */
+/* Control task produces messages; Comms task consumes them. */
+
+typedef struct {
+    uint8_t  full;   // 1 = new data available
+    uint32_t ticks;
+    uint16_t pA;
+    uint16_t pB;
+    uint8_t  fan;
+} comms_mailbox_t;
+
+static volatile comms_mailbox_t comms_mailbox = {0};
+
 /* ===================== Tasks ===================== */
 
 static volatile uint8_t fan_on = 0;
 
+/* TaskSense: reads sensors and updates shared power variables */
 void TaskSense(void)
 {
     uint16_t a, b;
@@ -99,6 +104,7 @@ void TaskSense(void)
     powerB = b;
 }
 
+/* TaskControl: applies threshold logic and updates LED + mailbox */
 void TaskControl(void)
 {
     const uint16_t THRESH = 600;
@@ -113,12 +119,59 @@ void TaskControl(void)
 
     /* Drive LD2 as our “fan” indicator */
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, s);
+
+    /* Publish a message to the mailbox for the Comms task */
+    comms_mailbox.ticks = sys_ticks;
+    comms_mailbox.pA    = powerA;
+    comms_mailbox.pB    = powerB;
+    comms_mailbox.fan   = fan_on;
+    comms_mailbox.full  = 1;    // mark as new data
 }
 
+/* TaskComms: reads mailbox and prints a message if new data is available */
 void TaskComms(void)
 {
-    /* Use sys_ticks as our time base (incremented in HAL_SYSTICK_Callback) */
-    comms_send(sys_ticks, powerA, powerB, fan_on);
+    uint32_t now = HAL_GetTick();   // instead of sys_ticks or 0
+    comms_send(now, powerA, powerB, fan_on);
+}
+
+
+/* ===================== Scheduler & SysTick ===================== */
+
+/* HAL calls this every 1 ms by default (interrupt context) */
+void HAL_SYSTICK_Callback(void)
+{
+    sys_ticks++;         // time base for scheduler and tasks
+    sched_flag = 1;      // request a scheduling decision
+}
+
+/* Cooperative, time-based scheduler
+ * - Runs in main context (not inside the ISR)
+ * - Chooses which task to run based on period & next_release time
+ */
+static void scheduler(void)
+{
+    uint32_t now = HAL_GetTick();
+
+    for (int i = 0; i < NUM_TASKS; i++) {
+        if ((int32_t)(now - tasks[i].next_release) >= 0) {
+            tasks[i].fn();
+            tasks[i].next_release += tasks[i].period_ms;
+        }
+    }
+}
+
+
+/* Initialise the task table:
+ * - Sense   @ 1 ms   (1 kHz)
+ * - Control @ 10 ms  (100 Hz)
+ * - Comms   @ 500 ms (2 Hz)
+ */
+static void init_tasks(void)
+{
+    tasks[0] = (task_t){ TaskSense,   1,   1   };
+    tasks[1] = (task_t){ TaskControl, 10,  10  };
+    tasks[2] = (task_t){ TaskComms,   500, 500 };
 }
 
 /* ===================== printf → UART2 ===================== */
@@ -138,22 +191,22 @@ int main(void)
     HAL_Init();              // init HAL, SysTick, etc.
 
     SystemClock_Config();    // clocks
-    MX_GPIO_Init();          // LED pin
+    MX_GPIO_Init();          // LED & button pins
     MX_USART2_UART_Init();   // UART2 on STLink VCP
 
-    const char *start_msg = "Simple 3-task demo start\r\n";
+    const char *start_msg = "RTOS-style 3-task demo start\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t*)start_msg,
                       strlen(start_msg), HAL_MAX_DELAY);
 
+    /* Initialize the software RTOS scheduler */
+    init_tasks();
+
     while (1)
     {
-        /* Run our three “tasks” once every 500 ms */
-        TaskSense();    // read fake sensor
-        TaskControl();  // update fan + LED
-        TaskComms();    // print values
-
-        HAL_Delay(500);
+        scheduler();     // run scheduler every tick
+        HAL_Delay(1);    // 1 ms granularity
     }
+
 }
 
 /* ===================== CubeMX-style init functions ===================== */
@@ -254,3 +307,4 @@ void assert_failed(uint8_t *file, uint32_t line)
     /* You can printf here if you want */
 }
 #endif
+
