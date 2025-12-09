@@ -214,7 +214,8 @@ This project is part of a capstone course requirement.
 ## Contributors
 
 - Shruti Nagawekar
-- [Your Team Members]
+- Matthew Knoz
+- Edwin Montanez
 
 ---
 
