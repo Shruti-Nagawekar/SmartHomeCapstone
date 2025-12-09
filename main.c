@@ -7,9 +7,102 @@
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_I2C1_Init(void);
 
 /* UART handle (used by HAL + printf) */
 UART_HandleTypeDef huart2;
+I2C_HandleTypeDef  hi2c1;   // I2C handle for INA219
+
+/* ===================== INA219 Driver ===================== */
+/* I2C 7-bit addresses (shifted left by 1 for HAL) */
+#define INA219_FAN_ADDR      (0x40 << 1)   // adjust according to A0/A1 wiring
+#define INA219_PHONE_ADDR    (0x41 << 1)   // second INA219
+
+/* INA219 registers */
+#define INA219_REG_CONFIG    0x00
+#define INA219_REG_SHUNT     0x01
+#define INA219_REG_BUS       0x02
+#define INA219_REG_CALIB     0x05
+
+static HAL_StatusTypeDef ina219_write_reg(uint16_t devAddr, uint8_t reg, uint16_t value);
+static HAL_StatusTypeDef ina219_read_reg(uint16_t devAddr, uint8_t reg, uint16_t *value);
+static void              ina219_init(uint16_t devAddr);
+static uint16_t          ina219_read_power_mW(uint16_t devAddr);
+
+/* ===================== INA219 Functions ===================== */
+
+static void ina219_init(uint16_t devAddr)
+{
+    uint16_t config = 0x399F;  // default from datasheet
+
+    HAL_StatusTypeDef st = ina219_write_reg(devAddr, INA219_REG_CONFIG, config);
+
+    if (st != HAL_OK) {
+        printf("INA219 init FAILED at addr 0x%02lX (status=%d)\r\n",
+               (unsigned long)(devAddr >> 1), st);
+    } else {
+        printf("INA219 init OK at addr 0x%02lX\r\n",
+               (unsigned long)(devAddr >> 1));
+    }
+}
+
+static HAL_StatusTypeDef ina219_write_reg(uint16_t devAddr, uint8_t reg, uint16_t value)
+{
+    uint8_t data[2];
+    data[0] = (uint8_t)(value >> 8);       // MSB
+    data[1] = (uint8_t)(value & 0xFF);     // LSB
+
+    // was: HAL_MAX_DELAY
+    return HAL_I2C_Mem_Write(&hi2c1, devAddr,
+                             reg, I2C_MEMADD_SIZE_8BIT,
+                             data, 2, 20);   // 20 ms timeout
+}
+
+static HAL_StatusTypeDef ina219_read_reg(uint16_t devAddr, uint8_t reg, uint16_t *value)
+{
+    uint8_t data[2];
+    HAL_StatusTypeDef status;
+
+    status = HAL_I2C_Mem_Read(&hi2c1, devAddr,
+                              reg, I2C_MEMADD_SIZE_8BIT,
+                              data, 2, 20);   // 20 ms timeout
+    if (status != HAL_OK) return status;
+
+    *value = ((uint16_t)data[0] << 8) | data[1];
+    return HAL_OK;
+}
+
+static uint16_t ina219_read_power_mW(uint16_t devAddr)
+{
+    uint16_t raw_shunt_u16;
+    uint16_t raw_bus_u16;
+
+    if (ina219_read_reg(devAddr, INA219_REG_SHUNT, &raw_shunt_u16) != HAL_OK)
+        return 0;
+    if (ina219_read_reg(devAddr, INA219_REG_BUS, &raw_bus_u16) != HAL_OK)
+        return 0;
+
+    /* Shunt voltage is signed (two's complement) */
+    int16_t raw_shunt = (int16_t)raw_shunt_u16;
+
+    int32_t current_mA = (int32_t)raw_shunt;  // in units of 0.1 mA
+    current_mA = current_mA / 10;             // ≈ mA
+
+    if (current_mA < 0) current_mA = -current_mA;  // absolute value
+
+    /* Bus voltage:
+     * bus_reg LSB = 4 mV, bits 0-2 are flags → shift right by 3.
+     */
+    uint32_t bus_mV = ((uint32_t)(raw_bus_u16 >> 3)) * 4;
+
+    /* Calculate power converted to mW */
+    uint32_t p_uW = bus_mV * (uint32_t)current_mA;
+    uint32_t p_mW = p_uW / 1000;
+
+    if (p_mW > 0xFFFF) p_mW = 0xFFFF;   // clamp to 16-bit
+
+    return (uint16_t)p_mW;
+}
 
 /* ===================== Task & Scheduler Types ===================== */
 
@@ -38,24 +131,16 @@ typedef void (*sensor_read_fn_t)(uint16_t *powerA, uint16_t *powerB);
 static volatile uint16_t powerA = 0;
 static volatile uint16_t powerB = 0;
 
-/* Simulated sensor – replace with INA219 later */
-static void sensor_simulated(uint16_t *pA, uint16_t *pB)
-{
-    static uint16_t x = 0;
-    x = (x + 5) % 1000;    // ramp 0..995 in steps of 5
-    *pA = x;
-    *pB = 1000 - x;
-}
-
-/* Real INA219 version will live here later
 static void sensor_ina219(uint16_t *pA, uint16_t *pB)
 {
-    *pA = ina219_read_power(INA219_ADDR_1);
-    *pB = ina219_read_power(INA219_ADDR_2);
-}
-*/
+    uint16_t p_fan_mW   = ina219_read_power_mW(INA219_FAN_ADDR);
+    uint16_t p_phone_mW = ina219_read_power_mW(INA219_PHONE_ADDR);
 
-static sensor_read_fn_t sensor_read = sensor_simulated;
+    *pA = p_fan_mW;
+    *pB = p_phone_mW;
+}
+
+static sensor_read_fn_t sensor_read = sensor_ina219;
 
 /* ===================== Comms Abstraction ===================== */
 
@@ -116,7 +201,7 @@ void TaskControl(void)
     }
 
     /* Drive LD2 as our “fan” indicator */
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, s);
+    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, s);
 
     /* Publish a message to the mailbox for the Comms task */
     comms_mailbox.ticks = HAL_GetTick();
@@ -147,8 +232,9 @@ void TaskComms(void)
 /* Cooperative, time-based scheduler using HAL_GetTick()
  * - Runs in main context
  * - Chooses which task to run based on period & next_release time
+ * - Called from SysTick handler in Cube IDE Config Files
  */
-static void scheduler(void)
+void scheduler(void)
 {
     uint32_t now = HAL_GetTick();
 
@@ -186,11 +272,20 @@ int _write(int file, char *ptr, int len)
 
 int main(void)
 {
-    HAL_Init();              // init HAL, SysTick, etc.
+    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+    HAL_Init();
 
-    SystemClock_Config();    // clocks
-    MX_GPIO_Init();          // LED & button pins
-    MX_USART2_UART_Init();   // UART2 on STLink VCP
+    /* Configure the system clock (CubeMX-generated) */
+    SystemClock_Config();
+
+    /* Initialize all configured peripherals */
+    MX_GPIO_Init();
+    MX_USART2_UART_Init();
+    MX_I2C1_Init();          // Enable I2C for INA219
+
+    /* Initialize INA219 sensors */
+    ina219_init(INA219_FAN_ADDR);       // Initialize the fan sensor
+    ina219_init(INA219_PHONE_ADDR);     // Initialize the phone charger sensor
 
     const char *start_msg = "RTOS-style 3-task demo start\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t*)start_msg,
@@ -201,114 +296,184 @@ int main(void)
 
     while (1)
     {
-        __WFI();   // Wait For Interrupt (low-power idle)
+        scheduler();
+        HAL_Delay(1);
     }
-}
-
-/* ===================== SysTick Handler (preemptive scheduler hook) ===================== */
-
-void SysTick_Handler(void)
-{
-    HAL_IncTick();   // HAL time base for HAL_GetTick, HAL_Delay, etc.
-
-    scheduler();     // run our RTOS scheduler preemptively every tick
 }
 
 /* ===================== CubeMX-style init functions ===================== */
 
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
 void SystemClock_Config(void)
 {
-    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-    /* Configure the main internal regulator output voltage */
-    __HAL_RCC_PWR_CLK_ENABLE();
-    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+  /** Configure the main internal regulator output voltage
+  */
+  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
-    /* Initializes the RCC Oscillators */
-    RCC_OscInitStruct.OscillatorType      = RCC_OSCILLATORTYPE_HSI;
-    RCC_OscInitStruct.HSIState            = RCC_HSI_ON;
-    RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-    RCC_OscInitStruct.PLL.PLLState        = RCC_PLL_NONE;
+  /** Configure LSE Drive Capability
+  */
+  HAL_PWR_EnableBkUpAccess();
+  __HAL_RCC_LSEDRIVE_CONFIG(RCC_LSEDRIVE_LOW);
 
-    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
-        Error_Handler();
-    }
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSE|RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.LSEState = RCC_LSE_ON;
+  RCC_OscInitStruct.MSIState = RCC_MSI_ON;
+  RCC_OscInitStruct.MSICalibrationValue = 0;
+  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_MSI;
+  RCC_OscInitStruct.PLL.PLLM = 1;
+  RCC_OscInitStruct.PLL.PLLN = 16;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV7;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
-    /* Initializes the CPU, AHB and APB buses clocks */
-    RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_HCLK     |
-                                       RCC_CLOCKTYPE_SYSCLK   |
-                                       RCC_CLOCKTYPE_PCLK1    |
-                                       RCC_CLOCKTYPE_PCLK2;
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-    RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_HSI;
-    RCC_ClkInitStruct.AHBCLKDivider  = RCC_SYSCLK_DIV1;
-    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
-    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK) {
-        Error_Handler();
-    }
+  /** Enable MSI Auto calibration
+  */
+  HAL_RCCEx_EnableMSIPLLMode();
 }
 
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_GPIO_Init(void)
 {
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-    /* GPIO Ports Clock Enable */
-    __HAL_RCC_GPIOC_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
-    /*Configure GPIO pin Output Level */
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 
-    /*Configure GPIO pin : PC13 (User Button) */
-    GPIO_InitStruct.Pin  = GPIO_PIN_13;
-    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  /*Configure GPIO pin : B1_Pin (User Button) */
+  GPIO_InitStruct.Pin  = B1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-    /*Configure GPIO pin : PA5 (LD2 LED) */
-    GPIO_InitStruct.Pin   = GPIO_PIN_5;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  /*Configure GPIO pin : LD2_Pin (LED) */
+  GPIO_InitStruct.Pin   = LD2_Pin;
+  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull  = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 }
 
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
 static void MX_USART2_UART_Init(void)
 {
-    huart2.Instance          = USART2;
-    huart2.Init.BaudRate     = 115200;
-    huart2.Init.WordLength   = UART_WORDLENGTH_8B;
-    huart2.Init.StopBits     = UART_STOPBITS_1;
-    huart2.Init.Parity       = UART_PARITY_NONE;
-    huart2.Init.Mode         = UART_MODE_TX_RX;
-    huart2.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
-    huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart2.Instance          = USART2;
+  huart2.Init.BaudRate     = 115200;
+  huart2.Init.WordLength   = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits     = UART_STOPBITS_1;
+  huart2.Init.Parity       = UART_PARITY_NONE;
+  huart2.Init.Mode         = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
 
-    if (HAL_UART_Init(&huart2) != HAL_OK) {
-        Error_Handler();
-    }
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.Timing           = 0x00303D5B;   // from CubeMX for ~100 kHz @ your clock
+  hi2c1.Init.OwnAddress1      = 0;
+  hi2c1.Init.AddressingMode   = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode  = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2      = 0;
+  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c1.Init.GeneralCallMode  = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode    = I2C_NOSTRETCH_DISABLE;
+
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
 }
 
 /* ===================== Error Handler ===================== */
 
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
 void Error_Handler(void)
 {
-    __disable_irq();
-    while (1) {
-        /* Optional: blink LED rapidly to signal error */
-        HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-        HAL_Delay(100);
-    }
+  __disable_irq();
+  while (1)
+  {
+    /* Optional: blink LED rapidly to signal error */
+    HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+    HAL_Delay(100);
+  }
 }
 
 #ifdef USE_FULL_ASSERT
 void assert_failed(uint8_t *file, uint32_t line)
 {
-    (void)file;
-    (void)line;
-    /* You can printf here if you want */
+  (void)file;
+  (void)line;
+  /* You can printf here if you want */
 }
 #endif
