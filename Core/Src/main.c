@@ -183,6 +183,7 @@ static void Fan1_SetSwitch(uint8_t on)
     HAL_GPIO_WritePin(FAN1_SW_GPIO_Port,
                       FAN1_SW_Pin,
                       fan1_sw_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    //printf("Fan1 switch = %u\r\n", fan1_sw_on);
 }
 
 /* ========== I2C Scanner ========== */
@@ -237,7 +238,7 @@ void TaskSense(void)
 
 void TaskControl(void)
 {
-    const uint16_t THRESH = 1000;
+    const uint16_t THRESH = 3000;
     GPIO_PinState led_state = GPIO_PIN_RESET;
 
     if ((powerA + powerB) > THRESH) {
@@ -452,6 +453,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : FAN1_SW_Pin */
+  GPIO_InitStruct.Pin = FAN1_SW_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(FAN1_SW_GPIO_Port, &GPIO_InitStruct);
 }
 
 /**
