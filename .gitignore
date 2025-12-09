@@ -1,0 +1,62 @@
+# ===============================
+# STM32CubeIDE Build Artifacts
+# ===============================
+Debug/
+Release/
+build/
+
+*.o
+*.d
+*.su
+*.cyclo
+*.elf
+*.map
+*.list
+
+makefile
+*.mk
+objects.list
+objects.mk
+sources.mk
+subdir.mk
+
+# ===============================
+# STM32CubeIDE / Eclipse Metadata
+# (Do NOT commit these — machine-specific)
+# ===============================
+.cproject
+.project
+.settings/
+.metadata/
+
+# CubeMX project meta (optional: keep or ignore)
+# .mxproject
+
+# ===============================
+# IDE / Editor Files
+# ===============================
+# Cursor IDE folder
+.cursor/
+
+# Debug launch configurations
+*.launch
+
+# VSCode (if ever used)
+.vscode/
+
+# JetBrains IDEs
+.idea/
+
+# ===============================
+# OS Files
+# ===============================
+.DS_Store
+Thumbs.db
+
+# Swap / temp files
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
+*.log

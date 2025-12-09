@@ -1,123 +1,226 @@
-**RTOS-Style Scheduler Demo (STM32F446RE)**
+# Smart Home Energy Monitoring System - Capstone Project
 
-*1. Overview*
+## Overview
 
-This project implements a custom RTOS-style cooperative scheduler on the STM32F446RE Nucleo-64 board.
-The goal is to demonstrate periodic tasks, inter-task messaging, and UART communication without using FreeRTOS or any external RTOS library.
+This project implements a **Smart Home Energy Monitoring and Control System** with a custom-built real-time operating system (RTOS) on the STM32F446RE microcontroller. The system monitors energy consumption from two INA219 sensors, applies threshold-based control logic, and transmits telemetry data via Wi‑Fi to a web dashboard.
 
-Three periodic tasks are scheduled:
+**Key Features:**
+- Custom RTOS scheduler with 3 concurrent tasks
+- Real-time sensor sampling at 1 kHz
+- INA219 current/voltage sensors (I²C)
+- Wi‑Fi communication via ESP32 (ESP-AT protocol)
+- JSON telemetry format
+- Threshold-based automated control
+- Inter-task communication via mailbox pattern
 
-**TaskSense** — Samples sensor readings (simulated INA219)
-**TaskControl** — Applies threshold logic and drives LED (fan indicator)
-**TaskComms** — Sends UART messages using mailbox data from Control
+---
 
-This meets the project requirements for:
-Multi-task design
-Software scheduler
-Inter-task communication
-UART output
+## Hardware Requirements
 
-*2. Hardware & Tools*
+- **MCU:** STM32F446RET6 (NUCLEO-F446RE board)
+- **Sensors:** 2x INA219 current/voltage sensors (I²C)
+  - INA219_FAN_ADDR: 0x40 (fan/load monitoring)
+  - INA219_PHONE_ADDR: 0x41 (phone charger monitoring)
+- **Wi‑Fi Module:** ESP32 with ESP-AT firmware
+- **Communication:**
+  - UART2: Debug output (ST-LINK VCP)
+  - USART3: ESP32 Wi‑Fi module (PB10/PB11)
+  - I2C1: INA219 sensors (PB6/SCL, PB7/SDA)
 
-Board: NUCLEO-F446RE (Nucleo-64)
-MCU: STM32F446RET6
-IDE: STM32CubeIDE 1.19.0
-Clock Source: Internal HSI 16 MHz
-UART: USART2 → ST-LINK Virtual COM Port
+---
 
-*3. How to Build and Run*
+## Software Architecture
 
-- Open the project in STM32CubeIDE.
-- Place the provided main.c in:
-   Core/Src/main.c
-- Click Build (hammer icon).
-- Click Debug or Run to flash the board.
+### Custom RTOS Scheduler
 
-*4. Serial Output*
+Cooperative, time-based scheduler using `HAL_GetTick()` for deterministic task execution.
 
-Use a serial terminal:
+**Task Schedule:**
+| Task        | Period | Frequency | Description                    |
+|-------------|--------|-----------|--------------------------------|
+| TaskSense   | 1 ms   | 1 kHz     | Samples INA219 sensors         |
+| TaskControl | 10 ms  | 100 Hz    | Threshold logic, LED control   |
+| TaskComms   | 500 ms | 2 Hz      | Transmits JSON via Wi‑Fi/UART |
 
-Setting Value:
-Baud Rate:	115200
-Data:	8 bits
-Parity:	None
-Stop Bits:	1
-Flow Control:	None
+### Inter-Task Communication
 
-Typical output:
+**Mailbox Pattern (Producer-Consumer):**
+- `TaskControl` (producer) writes sensor data and control state
+- `TaskComms` (consumer) reads and transmits data
+- Synchronization via `full` flag
 
+### Modules
+
+1. **JSON Builder** (`json_builder.c/h`)
+   - Lightweight JSON formatting (no external libraries)
+   - Format: `{"t":1234,"pA":500,"pB":500,"fan":true}`
+
+2. **ESP-AT Module** (`esp_at.c/h`)
+   - ESP-AT command protocol implementation
+   - Wi‑Fi connection management
+   - HTTP POST transmission
+
+3. **INA219 Driver** (in `main.c`)
+   - I²C communication
+   - Power calculation in milliwatts
+   - Two-channel support
+
+---
+
+## Project Structure
+
+```
+demo/
+├── Core/
+│   ├── Inc/
+│   │   ├── esp_at.h              # ESP-AT Wi‑Fi module
+│   │   ├── json_builder.h        # JSON builder
+│   │   ├── main.h
+│   │   └── stm32f4xx_hal_conf.h  # HAL config (I2C enabled)
+│   └── Src/
+│       ├── esp_at.c              # ESP-AT implementation
+│       ├── json_builder.c        # JSON builder implementation
+│       ├── main.c                # Main application (RTOS + tasks)
+│       └── stm32f4xx_hal_msp.c   # MSP init (I2C1, USART3)
+├── demo.ioc                      # STM32CubeMX project file
+└── README.md                     # This file
+```
+
+---
+
+## Building and Running
+
+### Prerequisites
+- STM32CubeIDE 1.19.0 or later
+- STM32CubeMX (for hardware configuration)
+
+### Build Steps
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/Shruti-Nagawekar/SmartHomeCapstone.git
+   cd SmartHomeCapstone
+   ```
+
+2. **Open in STM32CubeIDE:**
+   - File → Import → Existing Projects into Workspace
+   - Select the project directory
+   - Click Finish
+
+3. **Build the project:**
+   - Project → Build All (or Ctrl+B)
+
+4. **Flash to board:**
+   - Run → Debug (or F11)
+
+### Configuration
+
+**Wi‑Fi Settings** (in `main.c`):
+```c
+#define WIFI_SSID        "YourWiFiSSID"
+#define WIFI_PASSWORD    "YourWiFiPassword"
+#define SERVER_IP        "192.168.1.100"
+#define SERVER_PORT      80
+#define HTTP_ENDPOINT    "/api/energy"
+```
+
+**Sensor Addresses** (in `main.c`):
+```c
+#define INA219_FAN_ADDR      (0x40 << 1)
+#define INA219_PHONE_ADDR    (0x41 << 1)
+```
+
+**Communication Mode:**
+- Change `comms_send` in `main.c`:
+  - `comms_uart` - Debug output via UART2
+  - `comms_esp_at` - Wi‑Fi transmission via ESP32
+
+---
+
+## Serial Output
+
+### Debug Mode (UART2)
+```
 RTOS-style 3-task demo start
-t=501ms pA=250 pB=750 fan=1
-t=1001ms pA=495 pB=505 fan=0
-t=1501ms pA=740 pB=260 fan=1
+Comms mode: UART2 (debug)
+{"t":500,"pA":250,"pB":750,"fan":true}
+{"t":1000,"pA":495,"pB":505,"fan":false}
+```
 
-*5. Scheduler Architecture*
-   
-Cooperative Scheduler:
-The scheduler is time-based and uses HAL_GetTick() for 1 ms timing.
-Each task is stored in a table:
-typedef struct {
-    task_fn_t  fn;
-    uint32_t   period_ms;
-    uint32_t   next_release;
-} task_t;
+### Wi‑Fi Mode (USART3)
+- JSON data transmitted via HTTP POST to configured server
+- Falls back to UART2 debug on Wi‑Fi errors
 
+---
 
-Periods used:
+## Control Logic
 
-| Task        | Period | Frequency |
-| ----------- | ------ | --------- |
-| TaskSense   | 1 ms   | 1 kHz     |
-| TaskControl | 10 ms  | 100 Hz    |
-| TaskComms   | 500 ms | 2 Hz      |
+**Threshold-Based Fan Control:**
+- Monitors power consumption from both sensors
+- Activates fan (LED indicator) when `powerA > 600 mW` OR `powerB > 600 mW`
+- Threshold configurable in `TaskControl()` function
 
-Scheduling Loop
+---
 
-Every 1 ms:
+## Testing
 
-scheduler();
-HAL_Delay(1);
+### Serial Monitor Settings
+- **Baud Rate:** 115200
+- **Data:** 8 bits
+- **Parity:** None
+- **Stop Bits:** 1
+- **Flow Control:** None
 
-The scheduler checks which tasks are due and runs them cooperatively.
+### Expected Behavior
+1. System initializes INA219 sensors on boot
+2. TaskSense samples sensors at 1 kHz
+3. TaskControl applies threshold logic every 10 ms
+4. TaskComms transmits JSON data every 500 ms
+5. LED (LD2) indicates fan state
 
+---
 
-*6. Inter-Task Communication (Mailbox)*
+## Project Requirements Met
 
-TaskControl produces messages, TaskComms consumes them.
+✅ **Custom RTOS:** Student-built scheduler (no external libraries)  
+✅ **3 Concurrent Tasks:** TaskSense, TaskControl, TaskComms  
+✅ **Inter-task Communication:** Mailbox pattern  
+✅ **Sensor Integration:** 2x INA219 sensors via I²C  
+✅ **1 kHz Sampling:** TaskSense @ 1 ms period  
+✅ **Wireless Communication:** ESP32 Wi‑Fi via ESP-AT  
+✅ **Real-time Control:** Threshold-based actuator control  
+✅ **Structured Data:** JSON telemetry format  
 
-typedef struct {
-    uint8_t  full;
-    uint32_t ticks;
-    uint16_t pA, pB;
-    uint8_t  fan;
-} comms_mailbox_t;
+---
 
+## Future Enhancements
 
-- full = 1 → new data available
-- Comms reads the message and prints it
-- Sets full = 0 after consuming
-  
-This satisfies the rubric’s requirement for message passing between tasks.
+- [ ] Web dashboard frontend
+- [ ] Average power calculation
+- [ ] Energy accumulation over time
+- [ ] Configurable thresholds via web interface
+- [ ] Multiple load control
+- [ ] Predictive load balancing
+- [ ] 24-hour continuous operation validation
 
-*7. LED Behavior*
+---
 
-- LD2 (PA5) acts as a fan indicator.
-- Turns ON when either sensor reading rises above 600.
-- Turns OFF otherwise.
+## License
 
-*8. Folder / File Structure*
-/Core
-  /Inc
-  /Src
-    main.c
-README.md   <-- this file
+This project is part of a capstone course requirement.
 
-*9. How to Demonstrate to Instructor*
+---
 
-- Reset the board.
-- Show the UART output updating every 500 ms.
-- Point out the individual task periods (1 ms, 10 ms, 500 ms).
-- Show mailbox operation (Comms prints only when Control posts new data).
-- Show LED toggling according to the threshold logic.
+## Contributors
 
-This covers all grading criteria for the RTOS demo.
+- Shruti Nagawekar
+- [Your Team Members]
+
+---
+
+## References
+
+- [STM32F4 HAL Documentation](https://www.st.com/resource/en/user_manual/um1725-description-of-stm32f4-hal-and-lowlayer-drivers-stmicroelectronics.pdf)
+- [INA219 Datasheet](https://www.ti.com/lit/ds/symlink/ina219.pdf)
+- [ESP-AT Command Set](https://docs.espressif.com/projects/esp-at/en/latest/esp32/AT_Command_Set/)
+
