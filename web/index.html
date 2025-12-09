@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smart Energy Monitor</title>
+
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <!-- Chart.js from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Smart Energy Monitor</h1>
+    <div id="statusDot" class="dot offline"></div>
+  </header>
+
+  <main>
+    <!-- Top tiles -->
+    <section class="tiles">
+      <div class="tile">
+        <h3>Total Power</h3>
+        <div id="totalPower" class="big">-- mW</div>
+        <div class="sub">Energy today: <span id="energyToday">--.--</span> kWh</div>
+      </div>
+
+      <div class="tile">
+        <h3>Fan A</h3>
+        <div id="fanAPower" class="big">-- mW</div>
+        <div class="row">
+          <span id="fanAState" class="badge">OFF</span>
+        </div>
+      </div>
+
+      <div class="tile">
+        <h3>Fan B</h3>
+        <div id="fanBPower" class="big">-- mW</div>
+        <div class="row">
+          <span id="fanBState" class="badge">OFF</span>
+        </div>
+      </div>
+
+      <div class="tile">
+        <h3>Fan Control</h3>
+        <div id="fanControlState" class="big" style="font-size: 1.5rem;">OFF</div>
+        <div class="sub">Both fans threshold status</div>
+      </div>
+    </section>
+
+    <!-- Graph -->
+    <section class="card">
+      <h2>Power & Energy</h2>
+      <canvas id="powerChart"></canvas>
+    </section>
+
+    <!-- Alert bar -->
+    <section id="alertBar" class="alert hidden">—</section>
+  </main>
+
+  <!-- Main app logic -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
