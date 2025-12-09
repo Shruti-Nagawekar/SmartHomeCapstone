@@ -72,6 +72,7 @@ typedef struct {
 static volatile comms_mailbox_t comms_mailbox = {0};
 
 static volatile uint8_t fan_on = 0;
+static volatile uint8_t fan1_sw_on = 0;
 
 
 /* Private function prototypes -----------------------------------------------*/
@@ -174,6 +175,16 @@ static uint16_t ina219_read_power_mW(uint16_t devAddr)
     return (uint16_t)p_mW;
 }
 
+/* Simple actuator control: 1 = ON, 0 = OFF */
+static void Fan1_SetSwitch(uint8_t on)
+{
+    fan1_sw_on = on ? 1 : 0;
+
+    HAL_GPIO_WritePin(FAN1_SW_GPIO_Port,
+                      FAN1_SW_Pin,
+                      fan1_sw_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+
 /* ========== I2C Scanner ========== */
 
 static void I2C_Scan(void)
@@ -226,17 +237,21 @@ void TaskSense(void)
 
 void TaskControl(void)
 {
-    const uint16_t THRESH = 400;
-    GPIO_PinState s = GPIO_PIN_RESET;
+    const uint16_t THRESH = 1000;
+    GPIO_PinState led_state = GPIO_PIN_RESET;
 
-    if (powerA > THRESH || powerB > THRESH) {
-        fan_on = 1;
-        s = GPIO_PIN_SET;
+    if ((powerA + powerB) > THRESH) {
+    	// Over-power condition: turn LED on and CUT actuator power
+    	fan_on = 1;
+    	led_state = GPIO_PIN_SET;
+    	Fan1_SetSwitch(0);   // cut Fan1
     } else {
         fan_on = 0;
+        led_state = GPIO_PIN_RESET;
+        Fan1_SetSwitch(1);   // enable Fan1
     }
 
-    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, s);
+    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, led_state);
 
     comms_mailbox.ticks = HAL_GetTick();
     comms_mailbox.pA    = powerA;
@@ -292,7 +307,9 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_I2C1_Init();
-  MX_USB_DEVICE_Init();   // remove if you don't need USB
+  MX_USB_DEVICE_Init();
+
+  Fan1_SetSwitch(1);   // allow fan initially
 
   printf("INA219 + RTOS demo starting...\r\n");
 
